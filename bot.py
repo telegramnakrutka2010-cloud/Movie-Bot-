@@ -1,6 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telethon import TelegramClient
+from telethon.errors import UserNotParticipantError, ChatAdminRequiredError, PeerIdInvalidError
 from config import API_ID, API_HASH, BOT_TOKEN, CHANNEL_ID, ADMIN_IDS
 from database import Database
 import asyncio
@@ -16,10 +17,13 @@ class MovieBot:
     
     def setup_client(self):
         """Setup Telethon client for subscription checking"""
-        self.client.start()
+        try:
+            self.client.start()
+        except Exception as e:
+            print(f"Error starting Telethon client: {e}")
     
     async def check_subscription(self, user_id):
-        """Check if user is subscribed to the channel"""
+        """Check if user is subscribed to the channel with proper error handling"""
         try:
             # Convert channel ID to proper format
             if CHANNEL_ID.startswith('@'):
@@ -27,9 +31,27 @@ class MovieBot:
             else:
                 channel = f"@{CHANNEL_ID}"
             
-            # Get participant info
-            participant = await self.client.get_participants(channel, user_ids=[user_id])
-            return len(participant) > 0
+            # Try to get participant info
+            entity = await self.client.get_entity(channel)
+            participant = await self.client.get_permissions(entity, user_id)
+            
+            # If we get here without exception, user is subscribed
+            return True
+        except UserNotParticipantError:
+            # User is not subscribed
+            return False
+        except (ChatAdminRequiredError, ValueError, PeerIdInvalidError):
+            # Bot doesn't have admin rights or invalid channel
+            # Alternative method: try to invite user (to check if they're not banned/subscribed)
+            try:
+                entity = await self.client.get_entity(channel)
+                # Try to get full channel info which might reveal subscription status
+                full_channel = await self.client.get_entity(entity)
+                # This is a fallback - in practice, you might want to log this issue
+                # since proper subscription checking requires bot admin rights
+                return False
+            except Exception:
+                return False
         except Exception as e:
             print(f"Subscription check error: {e}")
             return False
